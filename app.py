@@ -1,131 +1,99 @@
 import streamlit as st
 import pytesseract
 from PIL import Image
-import numpy as np
-import io
-import re
+import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
+import io
+import re
+import numpy as np
 
-# -----------------------------
-# App Title & Description
-# -----------------------------
+# Path to Tesseract OCR
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# Streamlit Page Configuration
 st.set_page_config(page_title="🧾 AI Bill Analyzer", page_icon="🤖", layout="wide")
 
+# Title Section
 st.title("🧾 AI Bill Analyzer")
-st.write("Upload any **invoice or bill image**, and I’ll automatically extract, summarize, and analyze key details for you!")
+st.write("Upload your invoice or receipt image and get detailed insights automatically!")
 
-# -----------------------------
-# Visitor Analytics Counter
-# -----------------------------
-if "visitor_count" not in st.session_state:
-    st.session_state.visitor_count = 0
-st.session_state.visitor_count += 1
-st.sidebar.metric("👥 Visitors this session", st.session_state.visitor_count)
+# Session State Initialization
+if "invoice_data" not in st.session_state:
+    st.session_state["invoice_data"] = []
 
-# -----------------------------
-# File Upload Section
-# -----------------------------
-uploaded_file = st.file_uploader("📤 Upload your bill/invoice image (JPG, PNG)", type=["jpg", "jpeg", "png"])
+# Upload Section
+uploaded_file = st.file_uploader("📤 Upload Invoice Image (JPG, PNG, or JPEG)", type=["jpg", "png", "jpeg"])
 
-if uploaded_file:
+# OCR Processing
+if uploaded_file is not None:
     image = Image.open(uploaded_file)
-    st.image(image, caption="🧾 Uploaded Invoice", use_column_width=True)
-
-    # Convert image to text
-    with st.spinner("🔍 Extracting text using OCR..."):
+    st.image(image, caption="🧾 Uploaded Invoice", use_container_width=True)
+    
+    with st.spinner("Extracting text using AI OCR..."):
         text = pytesseract.image_to_string(image)
 
-    # -----------------------------
-    # Display Extracted Text
-    # -----------------------------
-    st.subheader("📄 Extracted Text")
-    st.text_area("Raw Text", text, height=200)
+    st.subheader("🧠 Extracted Text")
+    st.text_area("Invoice Text", text, height=200)
 
-    # -----------------------------
-    # Extract Key Invoice Info
-    # -----------------------------
-    def extract_invoice_details(text):
-        details = {}
+    # Basic Info Extraction
+    amount_pattern = r"(?:INR|Rs\.?|₹)\s?([\d,]+\.?\d*)"
+    date_pattern = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})"
+    total_pattern = r"total\s*(?:amount|bill)?[:\s]*([\d,]+\.?\d*)"
 
-        # Invoice number
-        match = re.search(r"(?:Invoice|Bill|Receipt)\s*No[:\-]?\s*([A-Za-z0-9\-]+)", text, re.IGNORECASE)
-        details["Invoice Number"] = match.group(1) if match else "Not found"
+    amounts = re.findall(amount_pattern, text, re.IGNORECASE)
+    dates = re.findall(date_pattern, text, re.IGNORECASE)
+    totals = re.findall(total_pattern, text, re.IGNORECASE)
 
-        # Date
-        date_match = re.search(r"(\d{1,2}[-/\s]\d{1,2}[-/\s]\d{2,4})", text)
-        details["Date"] = date_match.group(1) if date_match else "Not found"
+    total_amount = totals[-1] if totals else (amounts[-1] if amounts else "Not found")
+    bill_date = dates[0] if dates else datetime.now().strftime("%d/%m/%Y")
 
-        # Total amount
-        total_match = re.search(r"Total\s*[:\-]?\s*₹?\s*([\d,.]+)", text, re.IGNORECASE)
-        details["Total Amount"] = total_match.group(1) if total_match else "Not found"
+    # Store to session
+    st.session_state["invoice_data"].append({
+        "File": uploaded_file.name,
+        "Amount": total_amount,
+        "Date": bill_date,
+        "Uploaded_On": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
 
-        # Company / Vendor name
-        company_match = re.search(r"(?:From|Vendor|Company)\s*[:\-]?\s*(.*)", text)
-        details["Vendor"] = company_match.group(1).strip() if company_match else "Not found"
+    # Summary Display
+    st.success("✅ Invoice processed successfully!")
+    st.metric(label="🧾 Total Amount", value=f"₹ {total_amount}")
+    st.metric(label="📅 Bill Date", value=bill_date)
 
-        return details
+# Show Analytics
+if len(st.session_state["invoice_data"]) > 0:
+    st.subheader("📊 Expense Analytics")
 
-    details = extract_invoice_details(text)
+    df = pd.DataFrame(st.session_state["invoice_data"])
+    df["Amount"] = pd.to_numeric(df["Amount"].str.replace(",", ""), errors="coerce")
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
-    # -----------------------------
-    # Display Extracted Details
-    # -----------------------------
-    st.subheader("🧠 Extracted Invoice Details")
-    for key, val in details.items():
-        st.write(f"**{key}:** {val}")
+    # Monthly expense graph
+    df_monthly = df.groupby(df["Date"].dt.to_period("M"))["Amount"].sum().reset_index()
+    df_monthly["Date"] = df_monthly["Date"].astype(str)
 
-    # -----------------------------
-    # Expense Category Detection
-    # -----------------------------
-    def categorize_expense(text):
-        categories = {
-            "Food": ["restaurant", "food", "meal", "dine", "pizza", "burger"],
-            "Travel": ["uber", "ola", "travel", "flight", "bus", "train", "cab"],
-            "Shopping": ["amazon", "flipkart", "purchase", "order", "item"],
-            "Utilities": ["electricity", "water", "internet", "recharge", "bill"],
-            "Medical": ["pharmacy", "hospital", "medicine", "health"]
-        }
-        for cat, keywords in categories.items():
-            if any(k.lower() in text.lower() for k in keywords):
-                return cat
-        return "General"
-
-    category = categorize_expense(text)
-    st.success(f"💰 **Detected Expense Category:** {category}")
-
-    # -----------------------------
-    # Insights Visualization
-    # -----------------------------
-    st.subheader("📊 Quick Insights")
-
-    labels = ["Subtotal", "Tax", "Discount", "Total"]
-    values = [70, 10, 5, 85]
-
-    fig, ax = plt.subplots()
-    ax.bar(labels, values)
-    ax.set_title("Sample Bill Breakdown (%)")
-    ax.set_ylabel("Amount")
+    st.write("### 💸 Expense Trend Over Time")
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(df_monthly["Date"], df_monthly["Amount"], marker="o")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Total Spent (₹)")
+    ax.set_title("Monthly Spending Trend")
     st.pyplot(fig)
 
-    # -----------------------------
-    # Download Extracted Info
-    # -----------------------------
-    result_text = "\n".join([f"{k}: {v}" for k, v in details.items()])
-    result_text += f"\nDetected Category: {category}\nExtracted on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    # Show table
+    st.write("### 🧾 Processed Invoices")
+    st.dataframe(df)
 
+    # Download option
+    csv = df.to_csv(index=False).encode("utf-8")
     st.download_button(
-        label="📥 Download Extracted Details",
-        data=result_text,
-        file_name="invoice_details.txt",
-        mime="text/plain"
+        label="⬇️ Download Expense Report (CSV)",
+        data=csv,
+        file_name="ai_bill_analysis_report.csv",
+        mime="text/csv"
     )
 
-else:
-    st.info("👆 Upload an invoice to begin analysis!")
-
-# -----------------------------
 # Footer
-# -----------------------------
 st.markdown("---")
-st.caption("Built with ❤️ using Streamlit, Tesseract OCR, and Python. | © 2025 AI Bill Analyzer")
+st.markdown("Made with ❤️ by Koushik Sarbabhoum | Powered by Streamlit + PyTesseract OCR")

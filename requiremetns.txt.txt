@@ -1,5 +1,6 @@
 streamlit
-pillow
-numpy
 pytesseract
+pillow
+pandas
 matplotlib
+numpy

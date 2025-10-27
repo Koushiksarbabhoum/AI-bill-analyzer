@@ -1,110 +1,131 @@
 import streamlit as st
-import cv2
 import pytesseract
-import numpy as np
 from PIL import Image
-import pandas as pd
+import numpy as np
 import io
 import re
 import matplotlib.pyplot as plt
+from datetime import datetime
 
-# Streamlit Page Config
-st.set_page_config(page_title="🧾 AI Bill Analyzer", layout="wide")
+# -----------------------------
+# App Title & Description
+# -----------------------------
+st.set_page_config(page_title="🧾 AI Bill Analyzer", page_icon="🤖", layout="wide")
+
 st.title("🧾 AI Bill Analyzer")
-st.write("Upload your bill or receipt image to extract, analyze, and visualize key insights.")
+st.write("Upload any **invoice or bill image**, and I’ll automatically extract, summarize, and analyze key details for you!")
 
-# File uploader
-uploaded_file = st.file_uploader("📸 Upload Bill Image", type=["jpg", "jpeg", "png"])
+# -----------------------------
+# Visitor Analytics Counter
+# -----------------------------
+if "visitor_count" not in st.session_state:
+    st.session_state.visitor_count = 0
+st.session_state.visitor_count += 1
+st.sidebar.metric("👥 Visitors this session", st.session_state.visitor_count)
+
+# -----------------------------
+# File Upload Section
+# -----------------------------
+uploaded_file = st.file_uploader("📤 Upload your bill/invoice image (JPG, PNG)", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
-    # Display uploaded image
     image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Bill Image", use_container_width=True)
+    st.image(image, caption="🧾 Uploaded Invoice", use_column_width=True)
 
-    # Convert to grayscale
-    image_np = np.array(image)
-    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+    # Convert image to text
+    with st.spinner("🔍 Extracting text using OCR..."):
+        text = pytesseract.image_to_string(image)
 
-    # OCR with pytesseract
-    text = pytesseract.image_to_string(gray)
+    # -----------------------------
+    # Display Extracted Text
+    # -----------------------------
+    st.subheader("📄 Extracted Text")
+    st.text_area("Raw Text", text, height=200)
 
-    # Show extracted text
-    st.subheader("📋 Extracted Text")
-    st.text_area("Text from Bill", text, height=200)
+    # -----------------------------
+    # Extract Key Invoice Info
+    # -----------------------------
+    def extract_invoice_details(text):
+        details = {}
 
-    # Detect lines that might contain amounts
-    lines = [line.strip() for line in text.split("\n") if line.strip() != ""]
-    amount_lines = [line for line in lines if re.search(r"\d+\.\d{2}", line)]
+        # Invoice number
+        match = re.search(r"(?:Invoice|Bill|Receipt)\s*No[:\-]?\s*([A-Za-z0-9\-]+)", text, re.IGNORECASE)
+        details["Invoice Number"] = match.group(1) if match else "Not found"
 
-    # Create DataFrame
-    df = pd.DataFrame(amount_lines, columns=["Detected Lines"])
+        # Date
+        date_match = re.search(r"(\d{1,2}[-/\s]\d{1,2}[-/\s]\d{2,4})", text)
+        details["Date"] = date_match.group(1) if date_match else "Not found"
 
-    # Try to extract possible items and prices
-    items, prices = [], []
-    for line in amount_lines:
-        match = re.search(r"(.*?)(\d+\.\d{2})", line)
-        if match:
-            item = match.group(1).strip().title()
-            price = float(match.group(2))
-            items.append(item)
-            prices.append(price)
+        # Total amount
+        total_match = re.search(r"Total\s*[:\-]?\s*₹?\s*([\d,.]+)", text, re.IGNORECASE)
+        details["Total Amount"] = total_match.group(1) if total_match else "Not found"
 
-    if items and prices:
-        data = pd.DataFrame({"Item": items, "Price (₹)": prices})
-        st.subheader("📊 Detected Bill Details")
-        st.dataframe(data)
+        # Company / Vendor name
+        company_match = re.search(r"(?:From|Vendor|Company)\s*[:\-]?\s*(.*)", text)
+        details["Vendor"] = company_match.group(1).strip() if company_match else "Not found"
 
-        # Calculate totals
-        subtotal = sum(prices)
-        tax = subtotal * 0.18  # Assuming 18% tax
-        total = subtotal + tax
+        return details
 
-        st.metric("🧾 Subtotal", f"₹{subtotal:.2f}")
-        st.metric("💰 Estimated Tax (18%)", f"₹{tax:.2f}")
-        st.metric("✅ Total Amount", f"₹{total:.2f}")
+    details = extract_invoice_details(text)
 
-        # Category detection (simple keywords)
+    # -----------------------------
+    # Display Extracted Details
+    # -----------------------------
+    st.subheader("🧠 Extracted Invoice Details")
+    for key, val in details.items():
+        st.write(f"**{key}:** {val}")
+
+    # -----------------------------
+    # Expense Category Detection
+    # -----------------------------
+    def categorize_expense(text):
         categories = {
-            "Food": ["pizza", "burger", "restaurant", "meal", "snack", "cafe"],
-            "Grocery": ["milk", "rice", "sugar", "oil", "bread", "vegetable"],
-            "Electronics": ["charger", "mobile", "tv", "headphone", "laptop"],
-            "Clothing": ["shirt", "jeans", "dress", "shoe", "t-shirt"],
+            "Food": ["restaurant", "food", "meal", "dine", "pizza", "burger"],
+            "Travel": ["uber", "ola", "travel", "flight", "bus", "train", "cab"],
+            "Shopping": ["amazon", "flipkart", "purchase", "order", "item"],
+            "Utilities": ["electricity", "water", "internet", "recharge", "bill"],
+            "Medical": ["pharmacy", "hospital", "medicine", "health"]
         }
+        for cat, keywords in categories.items():
+            if any(k.lower() in text.lower() for k in keywords):
+                return cat
+        return "General"
 
-        def detect_category(item):
-            for cat, keywords in categories.items():
-                for k in keywords:
-                    if k.lower() in item.lower():
-                        return cat
-            return "Other"
+    category = categorize_expense(text)
+    st.success(f"💰 **Detected Expense Category:** {category}")
 
-        data["Category"] = data["Item"].apply(detect_category)
-        st.subheader("🗂️ Categorized Expenses")
-        st.dataframe(data)
+    # -----------------------------
+    # Insights Visualization
+    # -----------------------------
+    st.subheader("📊 Quick Insights")
 
-        # Visualization
-        st.subheader("📈 Expense Distribution")
-        category_sum = data.groupby("Category")["Price (₹)"].sum()
-        fig, ax = plt.subplots()
-        category_sum.plot.pie(autopct="%1.1f%%", ax=ax)
-        plt.ylabel("")
-        st.pyplot(fig)
+    labels = ["Subtotal", "Tax", "Discount", "Total"]
+    values = [70, 10, 5, 85]
 
-        # Download as CSV
-        csv = data.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download Bill Data (CSV)", csv, "bill_analysis.csv", "text/csv")
+    fig, ax = plt.subplots()
+    ax.bar(labels, values)
+    ax.set_title("Sample Bill Breakdown (%)")
+    ax.set_ylabel("Amount")
+    st.pyplot(fig)
 
-    else:
-        st.warning("No valid amount lines detected. Try uploading a clearer image or a printed bill.")
+    # -----------------------------
+    # Download Extracted Info
+    # -----------------------------
+    result_text = "\n".join([f"{k}: {v}" for k, v in details.items()])
+    result_text += f"\nDetected Category: {category}\nExtracted on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
-# Sidebar Info
-st.sidebar.header("⚙️ Advanced Features")
-st.sidebar.markdown("""
-- 🧾 OCR-based text extraction (Tesseract)
-- 💰 Auto total and tax calculation
-- 📦 Smart item categorization
-- 📈 Expense visualization
-- ⬇️ Data export as CSV
-""")
+    st.download_button(
+        label="📥 Download Extracted Details",
+        data=result_text,
+        file_name="invoice_details.txt",
+        mime="text/plain"
+    )
 
-st.sidebar.info("💡 Upcoming: Multi-language OCR, Invoice History, Cloud Save")
+else:
+    st.info("👆 Upload an invoice to begin analysis!")
+
+# -----------------------------
+# Footer
+# -----------------------------
+st.markdown("---")
+st.caption("Built with ❤️ using Streamlit, Tesseract OCR, and Python. | © 2025 AI Bill Analyzer")

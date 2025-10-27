@@ -1,6 +1,8 @@
 streamlit
 easyocr
-pillow
-pdf2image
 torch
 torchvision
+Pillow
+numpy
+opencv-python-headless
+pdfplumber

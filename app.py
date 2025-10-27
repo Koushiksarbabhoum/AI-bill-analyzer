@@ -1,102 +1,94 @@
 import streamlit as st
-import pytesseract
-from PIL import Image
 import pandas as pd
-import matplotlib.pyplot as plt
-from datetime import datetime
-import io
-import re
 import numpy as np
+import pytesseract
+import cv2
+from PIL import Image
+import io
 import os
 
+# ---------------- CONFIGURE TESSERACT PATH ----------------
+if os.name == "nt":  # Windows
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+else:  # Linux (Streamlit Cloud)
+    pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
+# ---------------- STREAMLIT APP CONFIG ----------------
+st.set_page_config(page_title="AI Bill Analyzer", layout="wide")
 
-# Path to Tesseract OCR
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+st.title("💡 AI Bill Analyzer & Insights Dashboard")
+st.caption("Upload your invoices and let AI extract, analyze, and visualize insights automatically.")
 
-# Streamlit Page Configuration
-st.set_page_config(page_title="🧾 AI Bill Analyzer", page_icon="🤖", layout="wide")
+# ---------------- FILE UPLOAD ----------------
+uploaded_file = st.file_uploader("📄 Upload an invoice image", type=["jpg", "jpeg", "png"])
 
-# Title Section
-st.title("🧾 AI Bill Analyzer")
-st.write("Upload your invoice or receipt image and get detailed insights automatically!")
-
-# Session State Initialization
-if "invoice_data" not in st.session_state:
-    st.session_state["invoice_data"] = []
-
-# Upload Section
-uploaded_file = st.file_uploader("📤 Upload Invoice Image (JPG, PNG, or JPEG)", type=["jpg", "png", "jpeg"])
-
-# OCR Processing
-if uploaded_file is not None:
+if uploaded_file:
     image = Image.open(uploaded_file)
-    st.image(image, caption="🧾 Uploaded Invoice", use_container_width=True)
-    
-    with st.spinner("Extracting text using AI OCR..."):
-        text = pytesseract.image_to_string(image)
+    st.image(image, caption="Uploaded Invoice", use_container_width=True)
 
-    st.subheader("🧠 Extracted Text")
-    st.text_area("Invoice Text", text, height=200)
+    # Convert image to grayscale for better OCR accuracy
+    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+    text = pytesseract.image_to_string(gray)
 
-    # Basic Info Extraction
-    amount_pattern = r"(?:INR|Rs\.?|₹)\s?([\d,]+\.?\d*)"
-    date_pattern = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})"
-    total_pattern = r"total\s*(?:amount|bill)?[:\s]*([\d,]+\.?\d*)"
+    st.subheader("🧾 Extracted Text")
+    st.text_area("OCR Output", text, height=200)
 
-    amounts = re.findall(amount_pattern, text, re.IGNORECASE)
-    dates = re.findall(date_pattern, text, re.IGNORECASE)
-    totals = re.findall(total_pattern, text, re.IGNORECASE)
+    # Try to extract useful fields
+    data = {
+        "Date": [],
+        "Item": [],
+        "Amount": [],
+    }
 
-    total_amount = totals[-1] if totals else (amounts[-1] if amounts else "Not found")
-    bill_date = dates[0] if dates else datetime.now().strftime("%d/%m/%Y")
+    lines = text.split("\n")
+    for line in lines:
+        if "202" in line or "20/" in line:  # Detect date-like patterns
+            data["Date"].append(line.strip())
+        elif any(char.isdigit() for char in line) and any(char.isalpha() for char in line):
+            data["Item"].append(line.strip())
+        elif any(c.isdigit() for c in line) and "." in line:
+            data["Amount"].append(line.strip())
 
-    # Store to session
-    st.session_state["invoice_data"].append({
-        "File": uploaded_file.name,
-        "Amount": total_amount,
-        "Date": bill_date,
-        "Uploaded_On": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
+    # Create DataFrame
+    df = pd.DataFrame.from_dict(data, orient="index").transpose()
+    st.subheader("📊 Extracted Data Table")
+    st.dataframe(df, width='stretch')
 
-    # Summary Display
-    st.success("✅ Invoice processed successfully!")
-    st.metric(label="🧾 Total Amount", value=f"₹ {total_amount}")
-    st.metric(label="📅 Bill Date", value=bill_date)
+    # ---------------- ANALYTICS SECTION ----------------
+    st.subheader("📈 Bill Analytics & Insights")
 
-# Show Analytics
-if len(st.session_state["invoice_data"]) > 0:
-    st.subheader("📊 Expense Analytics")
+    if not df.empty:
+        # Convert Amount column
+        def extract_amount(val):
+            try:
+                val = str(val)
+                val = ''.join(ch for ch in val if ch.isdigit() or ch == '.')
+                return float(val)
+            except:
+                return np.nan
 
-    df = pd.DataFrame(st.session_state["invoice_data"])
-    df["Amount"] = pd.to_numeric(df["Amount"].str.replace(",", ""), errors="coerce")
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df["Amount"] = df["Amount"].apply(extract_amount)
+        total = df["Amount"].sum()
+        avg = df["Amount"].mean()
 
-    # Monthly expense graph
-    df_monthly = df.groupby(df["Date"].dt.to_period("M"))["Amount"].sum().reset_index()
-    df_monthly["Date"] = df_monthly["Date"].astype(str)
+        st.metric("💰 Total Amount", f"₹ {total:,.2f}")
+        st.metric("📉 Average Amount per Item", f"₹ {avg:,.2f}")
 
-    st.write("### 💸 Expense Trend Over Time")
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(df_monthly["Date"], df_monthly["Amount"], marker="o")
-    ax.set_xlabel("Month")
-    ax.set_ylabel("Total Spent (₹)")
-    ax.set_title("Monthly Spending Trend")
-    st.pyplot(fig)
+        # Monthly trend (dummy grouping if no dates)
+        st.bar_chart(df["Amount"].dropna())
 
-    # Show table
-    st.write("### 🧾 Processed Invoices")
-    st.dataframe(df)
+        # AI-based suggestion
+        st.subheader("🤖 AI Insights")
+        if avg > 5000:
+            st.success("Your spending this month seems high. Consider reviewing big-ticket purchases.")
+        elif avg > 1000:
+            st.info("Your spending pattern looks moderate. Keep tracking recurring expenses.")
+        else:
+            st.warning("Your bills are quite low — great job managing your finances!")
 
-    # Download option
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="⬇️ Download Expense Report (CSV)",
-        data=csv,
-        file_name="ai_bill_analysis_report.csv",
-        mime="text/csv"
-    )
+    else:
+        st.warning("No structured data detected. Try uploading a clearer image.")
 
-# Footer
-st.markdown("---")
-st.markdown("Made with ❤️ by Koushik Sarbabhoum | Powered by Streamlit + PyTesseract OCR")
+# ---------------- FOOTER ----------------
+st.divider()
+st.caption("🚀 Built by Koushik — AI-powered Bill Analysis with OCR, NLP & Data Visualization")

@@ -21,7 +21,7 @@ except Exception:
     pdfplumber = None
 
 st.set_page_config(page_title="AI Bill Analyzer - MVP", layout="centered")
-st.title("🧾 AI Bill Analyzer — MVP")
+st.title("🧾 AI Bill Analyzer ")
 
 uploaded_file = st.file_uploader("Upload an invoice (image or PDF with selectable text)", type=["png","jpg","jpeg","pdf"])
 

@@ -7,6 +7,9 @@ from datetime import datetime
 import io
 import re
 import numpy as np
+import os
+
+
 
 # Path to Tesseract OCR
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"

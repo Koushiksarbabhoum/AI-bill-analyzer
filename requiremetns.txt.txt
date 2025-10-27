@@ -1,0 +1,6 @@
+streamlit
+easyocr
+pillow
+pdf2image
+torch
+torchvision

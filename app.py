@@ -1,94 +1,110 @@
 import streamlit as st
-import easyocr
+import cv2
+import pytesseract
+import numpy as np
+from PIL import Image
 import pandas as pd
+import io
+import re
 import matplotlib.pyplot as plt
-import random
-from datetime import datetime
 
-
-st.set_page_config(page_title="🧾 AI Bill Analyzer", page_icon="🤖", layout="wide")
-
-
+# Streamlit Page Config
+st.set_page_config(page_title="🧾 AI Bill Analyzer", layout="wide")
 st.title("🧾 AI Bill Analyzer")
-st.markdown("### Upload your bill or invoice and let AI extract, categorize, and visualize your expenses.")
+st.write("Upload your bill or receipt image to extract, analyze, and visualize key insights.")
 
+# File uploader
+uploaded_file = st.file_uploader("📸 Upload Bill Image", type=["jpg", "jpeg", "png"])
 
-if "session_start" not in st.session_state:
-    st.session_state.session_start = datetime.now()
-if "upload_count" not in st.session_state:
-    st.session_state.upload_count = 0
+if uploaded_file:
+    # Display uploaded image
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Uploaded Bill Image", use_container_width=True)
 
+    # Convert to grayscale
+    image_np = np.array(image)
+    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
 
-st.sidebar.header("📊 App Analytics")
-st.sidebar.write(f"🕒 Session started: {st.session_state.session_start.strftime('%H:%M:%S')}")
-st.sidebar.write(f"📤 Files uploaded this session: {st.session_state.upload_count}")
+    # OCR with pytesseract
+    text = pytesseract.image_to_string(gray)
 
+    # Show extracted text
+    st.subheader("📋 Extracted Text")
+    st.text_area("Text from Bill", text, height=200)
 
-uploaded_file = st.file_uploader("📂 Upload a bill/invoice image (JPG/PNG)", type=["jpg", "jpeg", "png"])
+    # Detect lines that might contain amounts
+    lines = [line.strip() for line in text.split("\n") if line.strip() != ""]
+    amount_lines = [line for line in lines if re.search(r"\d+\.\d{2}", line)]
 
-if uploaded_file is not None:
-    st.session_state.upload_count += 1
-    st.image(uploaded_file, caption="🧾 Uploaded Bill", use_column_width=True)
-    st.write("🔍 Extracting text...")
+    # Create DataFrame
+    df = pd.DataFrame(amount_lines, columns=["Detected Lines"])
 
-    
-    reader = easyocr.Reader(['en'])
-    result = reader.readtext(uploaded_file)
+    # Try to extract possible items and prices
+    items, prices = [], []
+    for line in amount_lines:
+        match = re.search(r"(.*?)(\d+\.\d{2})", line)
+        if match:
+            item = match.group(1).strip().title()
+            price = float(match.group(2))
+            items.append(item)
+            prices.append(price)
 
-    extracted_text = " ".join([res[1] for res in result])
-    st.text_area("📜 Extracted Text", extracted_text, height=200)
+    if items and prices:
+        data = pd.DataFrame({"Item": items, "Price (₹)": prices})
+        st.subheader("📊 Detected Bill Details")
+        st.dataframe(data)
 
-    
-    keywords = {
-        "food": ["restaurant", "burger", "pizza", "food", "meal"],
-        "travel": ["uber", "taxi", "bus", "train", "flight"],
-        "utilities": ["electricity", "water", "internet", "gas", "bill"],
-        "shopping": ["store", "shop", "amazon", "mall", "purchase"]
-    }
+        # Calculate totals
+        subtotal = sum(prices)
+        tax = subtotal * 0.18  # Assuming 18% tax
+        total = subtotal + tax
 
-    category_detected = None
-    for category, words in keywords.items():
-        if any(word in extracted_text.lower() for word in words):
-            category_detected = category
-            break
+        st.metric("🧾 Subtotal", f"₹{subtotal:.2f}")
+        st.metric("💰 Estimated Tax (18%)", f"₹{tax:.2f}")
+        st.metric("✅ Total Amount", f"₹{total:.2f}")
 
-    
-    import re
-    amounts = re.findall(r'\d+\.\d+|\d+', extracted_text)
-    total_amount = max(map(float, amounts)) if amounts else random.uniform(100, 1000)
+        # Category detection (simple keywords)
+        categories = {
+            "Food": ["pizza", "burger", "restaurant", "meal", "snack", "cafe"],
+            "Grocery": ["milk", "rice", "sugar", "oil", "bread", "vegetable"],
+            "Electronics": ["charger", "mobile", "tv", "headphone", "laptop"],
+            "Clothing": ["shirt", "jeans", "dress", "shoe", "t-shirt"],
+        }
 
-    st.subheader("💡 Analysis Summary")
-    st.write(f"**Category:** {category_detected or 'Uncategorized'}")
-    st.write(f"**Total Amount Detected:** ₹{total_amount:.2f}")
+        def detect_category(item):
+            for cat, keywords in categories.items():
+                for k in keywords:
+                    if k.lower() in item.lower():
+                        return cat
+            return "Other"
 
-    
-    categories = ["Food", "Travel", "Utilities", "Shopping", "Others"]
-    expenses = [random.uniform(100, 500) for _ in categories]
-    if category_detected:
-        idx = categories.index(category_detected.capitalize()) if category_detected.capitalize() in categories else -1
-        if idx != -1:
-            expenses[idx] = total_amount
+        data["Category"] = data["Item"].apply(detect_category)
+        st.subheader("🗂️ Categorized Expenses")
+        st.dataframe(data)
 
-    df = pd.DataFrame({"Category": categories, "Amount": expenses})
+        # Visualization
+        st.subheader("📈 Expense Distribution")
+        category_sum = data.groupby("Category")["Price (₹)"].sum()
+        fig, ax = plt.subplots()
+        category_sum.plot.pie(autopct="%1.1f%%", ax=ax)
+        plt.ylabel("")
+        st.pyplot(fig)
 
-    fig, ax = plt.subplots()
-    ax.pie(df["Amount"], labels=df["Category"], autopct="%1.1f%%", startangle=90)
-    ax.axis("equal")
-    st.pyplot(fig)
+        # Download as CSV
+        csv = data.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Download Bill Data (CSV)", csv, "bill_analysis.csv", "text/csv")
 
-    
-    st.subheader("🧠 AI Expense Insight")
-    if category_detected == "food":
-        st.info("🍴 You’ve spent quite a bit on food — consider cooking at home a few times this week!")
-    elif category_detected == "travel":
-        st.info("🚗 Frequent travel detected — try using public transport or shared rides to cut costs.")
-    elif category_detected == "utilities":
-        st.info("💡 High utility bills? Try checking for unused subscriptions or energy-saving tips.")
-    elif category_detected == "shopping":
-        st.info("🛍️ Shopping habits spotted — you could plan a monthly budget to track purchases.")
     else:
-        st.info("📈 Keep tracking your bills to discover spending trends over time.")
+        st.warning("No valid amount lines detected. Try uploading a clearer image or a printed bill.")
 
+# Sidebar Info
+st.sidebar.header("⚙️ Advanced Features")
+st.sidebar.markdown("""
+- 🧾 OCR-based text extraction (Tesseract)
+- 💰 Auto total and tax calculation
+- 📦 Smart item categorization
+- 📈 Expense visualization
+- ⬇️ Data export as CSV
+""")
 
-st.markdown("---")
-st.caption("Developed with ❤️ using Streamlit + EasyOCR | © 2025 AI Bill Analyzer")
+st.sidebar.info("💡 Upcoming: Multi-language OCR, Invoice History, Cloud Save")

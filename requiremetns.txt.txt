@@ -2,7 +2,7 @@ streamlit
 easyocr
 torch
 torchvision
-Pillow
-numpy
 opencv-python-headless
-pdfplumber
+numpy
+pillow
+

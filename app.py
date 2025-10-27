@@ -3,7 +3,18 @@ import streamlit as st
 from PIL import Image
 import io
 
-# lightweight pdf text extractor
+st.markdown(
+    """
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-7YMPGVF3W5"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-7YMPGVF3W5');
+    </script>
+    """,
+    unsafe_allow_html=True
+)
 try:
     import pdfplumber
 except Exception:
@@ -25,7 +36,7 @@ else:
             st.error("pdfplumber not installed. Please check requirements.")
         else:
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                # show first page as image if it has an image object, otherwise show nothing
+                
                 first_page = pdf.pages[0]
                 text = first_page.extract_text()
                 st.subheader("Extracted Text (from PDF text layer):")
@@ -33,14 +44,14 @@ else:
                     st.code(text)
                 else:
                     st.warning("This PDF looks like a scanned image (no selectable text). For scanned PDFs, use the mobile app or consider the paid OCR option later.")
-                # optionally render page as image if available
+                
                 try:
                     pil_image = first_page.to_image(resolution=150).original
                     st.image(pil_image, caption="PDF first page (rendered)", use_column_width=True)
                 except Exception:
                     pass
     else:
-        # image file
+        
         image = Image.open(io.BytesIO(file_bytes))
         st.image(image, caption="Uploaded image", use_column_width=True)
         st.subheader("Note")
